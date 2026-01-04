@@ -1,3 +1,196 @@
 ---
-title: "Auth0"
+title: "Auth0 SSO 개념 정리"
+description: "Auth0의 Single Sign-On 동작 방식과 Universal Login, Custom Domain 설정에 대한 개념 가이드"
 ---
+
+## SSO (Single Sign-On) 개념
+
+**SSO**는 한 번의 로그인으로 여러 애플리케이션에 자동으로 인증되는 사용자 경험입니다.
+
+```
+예시:
+Gmail 로그인 → YouTube, Google Drive 자동 로그인
+```
+
+<Note>
+SSO는 **결과/경험**이지 특정 구현 방식이 아닙니다. OAuth, SAML, OIDC 등 다양한 프로토콜로 SSO를 구현할 수 있습니다.
+</Note>
+
+---
+
+## Auth0의 두 가지 로그인 방식
+
+### Universal Login (권장)
+
+Auth0가 호스팅하는 중앙 집중식 로그인 페이지를 사용하는 방식입니다.
+
+```
+myapp.com 접속
+→ login.auth0.com 리다이렉트 (Auth0 호스팅 UI)
+→ 로그인 성공
+→ myapp.com으로 돌아옴
+```
+
+**특징:**
+- Auth0가 로그인 UI 제공
+- 중앙 집중식 인증
+- MFA, 소셜 로그인 자동 지원
+- OIDC/OAuth 2.0 프로토콜 사용
+
+<AccordionGroup>
+  <Accordion title="장점">
+    - 보안 업데이트 자동 적용
+    - 로그인 UI 개발 불필요
+    - 외부 IdP 연동 용이
+  </Accordion>
+  <Accordion title="단점">
+    - 매번 리다이렉트 필요
+    - UI 커스터마이징 제한
+    - Auth0 의존성
+  </Accordion>
+</AccordionGroup>
+
+### Embedded Login (비권장)
+
+자체 로그인 UI를 구현하고 Auth0 API만 사용하는 방식입니다.
+
+```
+myapp.com에 직접 로그인 폼 구현
+→ 사용자가 myapp.com에서 ID/PW 입력
+→ Auth0 API로 인증 (백엔드만 사용)
+```
+
+**특징:**
+- 자체 로그인 UI 구현
+- Auth0 백엔드 API만 사용
+- Cross-Site 문제 발생 가능
+
+<Warning>
+Embedded Login을 사용하려면 다음이 필수입니다:
+1. CORS 설정
+2. **Custom Domain** (Third-party cookie 문제 해결)
+</Warning>
+
+---
+
+## Cross-Origin vs Cross-Site
+
+브라우저 보안 정책을 이해하려면 두 개념의 차이를 알아야 합니다.
+
+### Cross-Origin (CORS 관점)
+
+프로토콜, 도메인, 포트 중 **하나라도 다르면** Cross-Origin입니다.
+
+| 출발지 | 목적지 | 결과 |
+|--------|--------|------|
+| `app.example.com` | `auth.example.com` | Cross-Origin (서브도메인 다름) |
+| `myapp.com` | `auth0.com` | Cross-Origin (도메인 다름) |
+| `localhost:3000` | `localhost:8080` | Cross-Origin (포트 다름) |
+
+### Cross-Site (쿠키 관점)
+
+**루트 도메인이 완전히 다를 때** Cross-Site입니다.
+
+<Tabs>
+  <Tab title="Same-Site (쿠키 공유 가능)">
+    ```
+    app.example.com → auth.example.com
+
+    → 같은 루트 도메인 (.example.com)
+    → Domain=.example.com 쿠키 공유 가능
+    ```
+  </Tab>
+  <Tab title="Cross-Site (Third-party cookie)">
+    ```
+    myapp.com → auth0.com
+
+    → 완전히 다른 도메인
+    → 브라우저가 Third-party cookie 차단
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Custom Domain 설정
+
+### 문제 상황
+
+Embedded Login 사용 시 Cross-Site 문제가 발생합니다.
+
+```
+앱 도메인: myapp.com
+Auth0 기본: tenant.auth0.com
+
+myapp.com → tenant.auth0.com API 호출
+→ Cross-Site
+→ Third-party cookie 차단
+→ 인증 실패
+```
+
+### Custom Domain으로 해결
+
+Auth0에 Custom Domain을 설정하면 Same-Site로 만들 수 있습니다.
+
+```
+Auth0 Custom Domain: login.myapp.com
+
+myapp.com → login.myapp.com
+→ Same-Site (같은 .myapp.com)
+→ Third-party cookie 문제 해결
+```
+
+### 설정 방법
+
+<Steps>
+  <Step title="Auth0 Custom Domain 활성화">
+    Auth0 Dashboard에서 Custom Domain 기능을 활성화합니다.
+  </Step>
+  <Step title="DNS CNAME 레코드 추가">
+    ```
+    login.myapp.com → xxx.auth0.com
+    ```
+  </Step>
+  <Step title="SSL 인증서 설정">
+    Auth0에서 제공하는 인증서를 사용하거나 자체 인증서를 설정합니다.
+  </Step>
+</Steps>
+
+---
+
+## Auth0 SSO 동작 방식
+
+### Universal Login SSO 흐름
+
+<Steps>
+  <Step title="첫 번째 앱 로그인">
+    ```
+    app1.myapp.com 접속
+    → login.auth0.com 리다이렉트
+    → 로그인 성공
+    → SSO 세션 쿠키 저장 (login.auth0.com 도메인)
+    → Access Token + Refresh Token 받음
+    → app1.myapp.com 돌아옴
+    ```
+  </Step>
+  <Step title="두 번째 앱 접속 (자동 로그인)">
+    ```
+    app2.myapp.com 접속
+    → login.auth0.com 리다이렉트
+    → SSO 세션 쿠키 확인 (이미 로그인됨!)
+    → 자동으로 토큰 발급 (로그인 UI 생략)
+    → app2.myapp.com 돌아옴
+    ```
+  </Step>
+</Steps>
+
+### 핵심 포인트
+
+<CardGroup cols={2}>
+  <Card title="SSO 세션 쿠키" icon="cookie">
+    Auth0 도메인(login.auth0.com)에 저장되어 여러 앱 간 공유됩니다.
+  </Card>
+  <Card title="토큰" icon="key">
+    Access Token과 Refresh Token은 각 앱에서 개별 관리합니다.
+  </Card>
+</CardGroup>
