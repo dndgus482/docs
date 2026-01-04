@@ -1,0 +1,475 @@
+---
+title: "OAuth2와 OpenID Connect, 정말 필요한가?"
+description: "OAuth2와 OIDC의 실제 사용 사례와 언제 사용하고 언제 피해야 하는지에 대한 실용적인 가이드"
+---
+
+<Info>
+이 글은 [Ory 블로그](https://www.ory.com/blog/oauth2-openid-connect-do-you-need-use-cases-examples)의 내용을 번역하고 정리한 것입니다. Ory는 OAuth2/OIDC 생태계에서 가장 성공적인 오픈소스 프로젝트인 **Ory Hydra**와 **Ory Fosite**를 만든 회사입니다.
+</Info>
+
+## 핵심 메시지
+
+> **"당신은 아마도 OAuth2나 OpenID Connect가 필요하지 않습니다."**
+
+이것은 논쟁적인 의견입니다. 특히 OAuth2/OIDC 생태계의 핵심 프로젝트를 만든 사람이 하는 말이니까요. 하지만 저자의 경험에 따르면, OAuth2와 OIDC가 **잘못된 맥락에서 사용되는 경우**를 너무 많이 봤다고 합니다.
+
+<Warning>
+**보안 취약점 사례**
+
+잘못된 OAuth2/OIDC 구현으로 인해 발생한 보안 이슈:
+- 경미한 문제: 로그아웃이 세션을 제대로 무효화하지 않음
+- 치명적 취약점: 관리자 권한 탈취를 통한 계정 하이재킹
+
+이런 문제는 개발자의 능력과 상관없이 **어떤 규모의 회사에서든** 발생할 수 있습니다.
+</Warning>
+
+---
+
+## OAuth2가 필요한지 판단하는 의사결정 트리
+
+<Frame>
+  <img src="https://images.ctfassets.net/t20ekfhsufm0/4dWlVFkqfT7LaPxMlJoNft/3ed7a19cd96ad61eaeb66f71afe15c45/image6-decision-tree.png" alt="OAuth2 의사결정 트리" />
+</Frame>
+
+### 두 가지 시나리오 구분
+
+OAuth2/OIDC를 구현하는 시나리오는 크게 두 가지입니다:
+
+<CardGroup cols={2}>
+  <Card title="소비자 (Consumer)" icon="arrow-right-to-bracket">
+    **"Sign in with Google"** 등을 구현하거나, 사용자의 GitHub 계정에 접근해야 하는 경우
+
+    → OAuth2가 **합리적인 선택**입니다
+
+    (이 글에서 다루지 않음)
+  </Card>
+  <Card title="제공자 (Provider)" icon="server">
+    OAuth2 Access Token, OpenID Connect ID Token 등을 **직접 발급**하는 시스템을 구축하려는 경우
+
+    → 이 글의 주제입니다!
+  </Card>
+</CardGroup>
+
+---
+
+## OAuth2와 OpenID Connect는 언제 유용한가?
+
+### OAuth2의 원래 목적
+
+OAuth2 RFC의 첫 문장을 보면:
+
+> "OAuth 2.0 인가 프레임워크는 **서드파티 애플리케이션**이 HTTP 서비스에 대한 제한된 접근 권한을 얻을 수 있게 합니다."
+
+OAuth2는 Web 2.0 시대의 필요에서 탄생했습니다:
+
+- Google, Facebook 같은 플랫폼이 **제3자에게 사용자 데이터를 개방**하고 싶었음
+- 2012년, **"Social Login"**이 대유행
+- 때로는 선의로 사용됨 (예: Facebook Games)
+- 때로는 악용됨 (예: Cambridge Analytica 스캔들)
+
+### OAuth2와 OIDC가 해결하는 두 가지 근본적 사용 사례
+
+| 프로토콜 | 목적 | 예시 |
+|---------|------|------|
+| **OAuth2** | 제3자가 사용자 데이터에 접근하도록 허용 | myphotoapp이 내 Facebook 사진에 접근 |
+| **OpenID Connect** | 제3자가 사용자를 인증하도록 허용 | "Sign in with Facebook" |
+
+---
+
+## OAuth2는 인증이 아니다
+
+<Warning>
+**OAuth2 ≠ 인증 (Authentication)**
+
+OAuth2 Access Token은 **세션이 아닙니다!**
+</Warning>
+
+### 왜 OpenID Connect가 필요한가?
+
+OAuth2 토큰과 OIDC 토큰의 **대상(Audience)**이 다릅니다:
+
+| 토큰 | 대상 | 용도 |
+|------|------|------|
+| OAuth2 Access Token | **퍼스트파티 서버** (예: GitHub API) | API 요청 인가 |
+| OpenID Connect ID Token | **서드파티 클라이언트** (예: 내 앱) | 사용자 인증 |
+
+### OAuth2를 인증에 사용하면 생기는 문제
+
+<Steps>
+  <Step title="공격 시나리오">
+    1. Bob이 "myphotobook" 앱을 만들고 "Sign in with Facebook" 구현
+    2. Eve가 "myevilapp" 앱을 만들고 역시 "Sign in with Facebook" 구현
+    3. Alice가 두 앱 모두 사용
+  </Step>
+  <Step title="취약점 발생">
+    Eve는 Alice가 myevilapp에서 발급받은 Facebook 토큰을 사용해서 myphotobook에서 Alice를 사칭할 수 있습니다.
+
+    ```
+    https://myphotobook.com/login?access_token=<alice의_myevilapp_facebook_토큰>
+    ```
+  </Step>
+  <Step title="OIDC의 해결책">
+    OpenID Connect ID Token은 **audience** 필드를 포함합니다:
+
+    ```json
+    {
+      "iss": "https://myphotobook.com",
+      "sub": "alice",
+      "aud": ["myphotobook"],  // ✅ OK
+      // "aud": ["myevilapp"], // ❌ 거부됨
+      "exp": 1516239022,
+      "iat": 1516239022
+    }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## 핵심 질문: 제3자(Third Party)인가?
+
+<Note>
+**핵심 포인트**
+
+OAuth2와 OIDC는 **제3자 연동**을 위한 프로토콜입니다.
+
+- 다른 회사/개발자가 **당신의 사용자 데이터**에 접근하려 함
+- 다른 회사/개발자가 **당신의 시스템으로 사용자를 인증**하려 함
+</Note>
+
+### 첫 번째 판단 기준
+
+| 질문 | OAuth2/OIDC 필요? |
+|------|------------------|
+| 파트너 네트워크, 플랫폼 API 등 제3자와 연동하는 시스템인가? | ✅ Yes |
+| "Sign in with [당신의 서비스]"를 제공하려는가? | ✅ Yes |
+| 자사 앱/서비스만을 위한 인증인가? | ❌ 아마 No |
+
+---
+
+## 퍼스트파티 애플리케이션에서는 OAuth2/OIDC를 피하라
+
+<Info>
+**권장사항**
+
+모바일 앱, SPA, 웹 앱, 네이티브 앱, API 시스템을 만들든, Bearer Token이나 JWT가 필요하든... **지금 당장은 OAuth2/OIDC의 복잡성이 필요 없을 가능성이 높습니다.**
+
+필요한 것:
+- 다양한 인증 방법 (비밀번호, 패스키, FIDO2, 생체인식, SMS...)
+- 프로필 관리
+- 계정 복구
+- 비밀번호 재설정
+- 이메일/전화번호 인증
+
+**나중에 필요해지면** Ory Hydra 같은 도구로 기존 인증 인프라 위에 OAuth2/OIDC를 추가할 수 있습니다.
+</Info>
+
+### 예외 사항
+
+<AccordionGroup>
+  <Accordion title="대기업의 경우">
+    Apple, Amazon처럼 수십만 명의 직원이 수백 개의 팀에서 일하는 경우, 부서 A(Gmail)가 부서 B(Google Earth)를 신뢰하지 않고 사용자 동의 없이 데이터 접근을 허용하지 않을 수 있습니다.
+
+    하지만 그런 대기업도 **자사 로그인 페이지에서는 OAuth2를 사용하지 않습니다!**
+
+    <Frame caption="Google은 자사 로그인에서 OAuth2/OIDC를 사용하지 않습니다">
+      <img src="https://images.ctfassets.net/t20ekfhsufm0/1cxXDDjh4YYiNpQOWxlVLu/6fb01040e3bbbe4d58a6e0ad0b94ec9a/image4-google-oidc.png" alt="Google Login - No OAuth2" />
+    </Frame>
+
+    HTML 폼을 서버에 POST하고 쿠키를 받는 전통적인 방식을 사용합니다!
+  </Accordion>
+  <Accordion title="니치 클라이언트가 많은 경우">
+    키보드나 브라우저가 없는 다양한 클라이언트 타입과 연동해야 하는 경우:
+    - 스마트 TV (Fire TV Stick, Chromecast)
+    - CLI 도구
+    - IoT 기기
+
+    이 경우 IETF와 OpenID Foundation이 정의한 Device Authorization Grant 등을 활용할 수 있습니다.
+  </Accordion>
+  <Accordion title="다른 서비스들과 연동이 많은 경우">
+    다음과 같은 도구들과 연동해야 하는 경우:
+    - Rocket Chat (채팅)
+    - Enterprise SSO를 지원하는 SaaS (Typeform 등)
+    - OpenID Connect SSO를 지원하는 기타 소프트웨어
+
+    이 경우 퍼스트파티용 인증과 서드파티용 OIDC를 분리할지, 모두 OIDC로 통일할지 결정해야 합니다.
+  </Accordion>
+  <Accordion title="퍼스트파티와 서드파티를 동시에 지원하는 경우">
+    제3자에게 OAuth2를 제공할 계획이라면, 처음부터 OIDC를 사용해서 두 가지 인증 메커니즘을 구현하지 않아도 될 수 있습니다.
+
+    하지만 이 결정은 컨텍스트에 따라 달라지며, 반드시 더 쉬운 것은 아닙니다.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## OAuth2/OIDC의 복잡성 문제
+
+### 복잡성은 보안을 해친다
+
+<Warning>
+**"이해하고 구현하기 어렵게 만드는 것은 보안을 개선하지 않습니다. 오히려 더 많은 것이 잘못될 수 있기 때문에 시스템을 덜 안전하게 만듭니다."**
+</Warning>
+
+주요 OAuth2 제공자들도 각자 다르게 구현합니다:
+- GitHub: OpenID Connect 미지원
+- Facebook: 자체 버전의 OIDC
+- Apple: OpenID Foundation으로부터 공개 서한을 받고 나서야 호환성 확보
+- Auth0: 자체적인 OAuth2 특이점...
+
+### 관련 RFC와 스펙의 양
+
+<Tabs>
+  <Tab title="핵심 스펙">
+    - Proof Key for Code Exchange (PKCE)
+    - OAuth 2.0 Threat Model and Security Considerations
+    - OAuth 2.0 Security Best Current Practice
+    - OAuth 2.0 for Native Apps
+    - OAuth 2.0 for Browser-Based Apps
+    - OAuth 2.0 Device Authorization Grant
+  </Tab>
+  <Tab title="토큰 관련">
+    - JWT Profile for OAuth 2.0 Access Tokens
+    - OAuth 2.0 Bearer Token Usage
+    - OAuth 2.0 Token Revocation
+    - OAuth 2.0 Token Introspection
+    - OAuth 2.0 Mutual-TLS Client Authentication
+  </Tab>
+  <Tab title="클라이언트 관련">
+    - Dynamic Client Registration Protocol
+    - Dynamic Client Registration Management Protocol
+    - Pushed Authorization Requests
+    - JWT-Secured Authorization Request (JAR)
+  </Tab>
+  <Tab title="OIDC 확장">
+    - OpenID Connect Session Management
+    - OpenID Connect Front-Channel Logout
+    - OpenID Connect Back-Channel Logout
+    - OpenID Connect Federation
+    - OpenID Connect Discovery
+  </Tab>
+</Tabs>
+
+그리고 금융기관(FAPI), 정부(iGov), 의료(HEART) 등 도메인별 스펙도 있습니다...
+
+---
+
+## 구체적인 문제점들
+
+### 1. 네이티브 앱에서의 UX 문제
+
+OAuth2/OIDC 플로우는 **브라우저에서 웹사이트와 상호작용**해야 합니다.
+
+```
+네이티브 앱 → 브라우저 열림 → 로그인 → 앱으로 돌아옴
+```
+
+<Warning>
+많은 퍼스트파티 앱에서 이것은 **절대 불가**입니다. 사용자가 앱을 떠나 브라우저를 열어야 하므로 UX가 깨집니다.
+</Warning>
+
+Resource Owner Password Credentials Grant로 우회할 수 있지만:
+- 모든 플랫폼에서 지원되지 않음
+- 보안 감사에서 경고 발생
+- OAuth 2.1에서 **제거 예정**
+
+### 2. 세션 관리의 복잡성
+
+#### 세션 레이어가 3개!
+
+Auth0 같은 서비스를 사용하면 **3개의 별도 세션 레이어**가 생깁니다:
+
+<Steps>
+  <Step title="Application Session Layer">
+    당신의 앱 내부 세션. 쿠키로 관리.
+  </Step>
+  <Step title="Auth0 Session Layer">
+    Auth0 서버의 SSO 세션. Auth0 도메인의 쿠키로 관리.
+  </Step>
+  <Step title="Identity Provider Session Layer">
+    Google, Facebook 등 외부 IdP의 세션.
+  </Step>
+</Steps>
+
+각 레이어마다 **별도의 로그아웃 메커니즘**이 필요합니다!
+
+#### 로그아웃 동기화 문제
+
+<Note>
+**실제 사례: CircleCI**
+
+CircleCI에 GitHub으로 로그인했다면, GitHub에서 로그아웃해도 **CircleCI에는 여전히 로그인 상태**입니다!
+
+OAuth2에서는 퍼스트파티의 세션 상태가 서드파티에게 중요하지 않습니다.
+</Note>
+
+### 3. 토큰 저장 위치 딜레마
+
+브라우저에서 데이터를 저장하는 방법:
+
+| 방법 | 설정 주체 | XSS 취약 |
+|------|----------|----------|
+| httpOnly 쿠키 | 서버만 | ❌ |
+| 일반 쿠키 (document.cookie) | 클라이언트 | ✅ |
+| LocalStorage | 클라이언트 | ✅ |
+
+**가장 안전한** httpOnly 쿠키는 **가장 불편**합니다. SPA처럼 웹 서버에 직접 접근할 수 없는 앱에서는 더 어렵습니다.
+
+### 4. 동기화와 Race Condition
+
+OAuth2는 **Token Replay** 공격을 막기 위해 엄격한 보안 조치가 있습니다:
+
+<Warning>
+**Refresh Token이나 Authorization Code를 두 번 사용하면:**
+- 요청 실패
+- 모든 관련 토큰 무효화
+- 사용자가 처음부터 OAuth2 플로우를 다시 해야 함!
+</Warning>
+
+분산 시스템에서 두 서비스가 동시에 같은 토큰을 갱신하려고 하면?
+
+해결책으로 유예 기간(grace period)을 둘 수 있지만... 또 다른 복잡성입니다.
+
+### 5. 팀 스케일링의 어려움
+
+<CardGroup cols={2}>
+  <Card title="높은 진입 장벽" icon="graduation-cap">
+    Resource Server, Resource Owner, Third Party Client, Relying Party, ID Token, Refresh Token, PKCE Verifier...
+
+    새 팀원이 모두 이해해야 합니다.
+  </Card>
+  <Card title="어떤 리소스를 따라야 하나?" icon="book">
+    수많은 자료가 있지만, 어떤 것이 **당신의 시스템**에 적용되는지 판단하기 어렵습니다.
+  </Card>
+</CardGroup>
+
+### 6. 동의 화면이 필요한가?
+
+<Frame caption="GitHub OAuth2 동의 화면">
+  <img src="https://images.ctfassets.net/t20ekfhsufm0/7BkAhG9JvEGJRJvq2k4xQn/8ba3a9c658faabf6a31f5ef31b2a5e8f/image1-consent-screen.png" alt="GitHub OAuth2 Consent Screen" />
+</Frame>
+
+<Note>
+**자문해보세요**
+
+사용자에게 이런 동의 화면을 보여주고 싶은가요?
+
+**아니라면, OAuth2/OIDC가 필요 없습니다!**
+</Note>
+
+### 7. Scope ≠ Permission
+
+<Warning>
+**OAuth2 Scope는 권한(Permission)이 아닙니다!**
+
+Access Token은 **사용자가 서드파티 앱에게 자신을 대신해서 할 수 있다고 동의한 것**을 나타냅니다.
+</Warning>
+
+예시:
+- Alice가 myphotoapp에 자신의 Facebook 사진 접근을 허용 ✅
+- Alice가 myphotoapp에 **시스템 관리자로서 DB 삭제**를 허용 → Alice가 관리자가 아니면 **무의미**
+- Alice가 myphotoapp에 **Bob의 사진** 접근을 허용 → Alice는 Bob이 아니므로 **불가능**
+
+---
+
+## 흔한 오해들
+
+<AccordionGroup>
+  <Accordion title="우리 API에 토큰이 필요하니까 OAuth2가 필요해!">
+    **아닙니다.** OAuth2 Access Token은 토큰의 **한 종류**일 뿐입니다.
+
+    - Personal Access Token
+    - API Key
+    - 단순한 JWT
+
+    이런 것들은 OAuth2 없이도 발급할 수 있습니다!
+
+    OAuth2가 필요한 경우: 사용자가 **"이 앱이 내 데이터에 접근하도록 허용합니다"**라고 동의해야 할 때
+  </Accordion>
+  <Accordion title="JWT를 쓰려면 OAuth2가 필요해!">
+    **아닙니다.** JWT와 OAuth2는 **독립적인 표준**입니다. JWT는 OAuth2 없이도 사용할 수 있습니다.
+  </Accordion>
+  <Accordion title="OAuth2로 권한 관리를 할 수 있어!">
+    **아닙니다.** Scope ≠ Permission입니다. OAuth2는 사용자 인가(authorization)에 적합하지 않습니다.
+  </Accordion>
+  <Accordion title="미래를 대비해서 지금 OAuth2가 필요해!">
+    수백 개의 서비스와 연동이 필요한 복잡한 환경이거나, 전담 팀을 구성할 수 있다면 타당할 수 있습니다.
+
+    **하지만** 소규모 팀이나 스타트업이라면, 이 글의 예외 사항에 해당하지 않는 한 필요하지 않습니다.
+  </Accordion>
+  <Accordion title="OAuth2/OIDC가 '가장 좋은 방법'이야!">
+    표준화되어 있고 대부분의 언어에 라이브러리가 있는 것은 사실입니다.
+
+    하지만 더 나은 방법이 있다면?
+    - 로그인, 회원가입, 계정 복구 등을 해결하면서
+    - 안전하지만 엄청나게 복잡하지 않고
+    - 확장 가능한 권한 관리를 제공하고
+    - 필요할 때 OAuth2/OIDC로 확장 가능한 것?
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## 스펙도 사라진다
+
+<Warning>
+**RFC와 스펙도 기술의 다른 것들처럼 deprecated 됩니다!**
+</Warning>
+
+| 스펙 | 상태 |
+|------|------|
+| OAuth2 Implicit Grant | ❌ Deprecated |
+| PKCE 없는 OAuth2 | ❌ OAuth 2.1에서 불가 |
+| Resource Owner Password Credentials Grant | ❌ OAuth 2.1에서 제거 예정 |
+| OIDC Session Management (hidden iframe 사용) | ⚠️ 브라우저 쿠키 정책으로 점점 어려워짐 |
+
+---
+
+## 그래서 OAuth2/OIDC가 나쁜 건가?
+
+<Note>
+**물론 아닙니다!**
+
+OAuth2와 OpenID Connect는 **올바른 맥락에서 사용하면** 시스템의 상호운용성을 크게 개선하고 복잡성을 줄여(= 보안 향상) 주는 강력하고 잘 설계된 프로토콜입니다.
+</Note>
+
+성공적으로 안전하게 사용되는 예:
+- Fire TV Stick
+- 다양한 서비스 연동 (HubSpot, Google, Discourse...)
+- 제3자에게 민감한 개인정보 접근 권한 제공
+
+---
+
+## 핵심 정리
+
+<CardGroup cols={2}>
+  <Card title="OAuth2/OIDC가 필요한 경우" icon="check">
+    - 제3자가 사용자 데이터에 접근해야 함
+    - "Sign in with [당신의 서비스]" 제공
+    - 파트너/플랫폼 API 연동
+    - 다양한 니치 클라이언트 (IoT, CLI) 지원
+  </Card>
+  <Card title="OAuth2/OIDC가 필요 없는 경우" icon="xmark">
+    - 자사 앱/서비스만을 위한 인증
+    - 로그인, 회원가입, 비밀번호 재설정
+    - Social Login 추가 (소비자로서)
+    - 새 모바일/SPA 앱 개발
+  </Card>
+</CardGroup>
+
+<Info>
+**결론**
+
+OAuth2와 OIDC의 복잡한 디테일을 밤새 공부하는 대신, **지금 당장 필요하지 않은 것에 시간을 낭비하지 마세요.**
+
+필요해지면 그때 추가할 수 있습니다!
+</Info>
+
+---
+
+## 참고 자료
+
+- [원문: Why you probably do not need OAuth2 / OpenID Connect](https://www.ory.com/blog/oauth2-openid-connect-do-you-need-use-cases-examples)
+- [OAuth 2.0 Flows Explained in GIFs](https://dev.to/hem/oauth-2-0-flows-explained-in-gifs-2o7a)
+- [Ory Kratos - OAuth2 없는 인증 솔루션](https://www.ory.sh/kratos/)
+- [Ory Hydra - OAuth2/OIDC 서버](https://www.ory.sh/hydra/)
