@@ -34,7 +34,8 @@
               {
                 "group": "Auth",
                 "pages": [
-                  "ko/blog/untitled-page"
+                  "ko/blog/untitled-page",
+                  "ko/blog/oauth2-do-you-need-it"
                 ]
               }
             ]
